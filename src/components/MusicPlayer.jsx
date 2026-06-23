@@ -12,113 +12,83 @@ const MusicPlayer = () => {
 
   const [currentTrackIndex, setCurrentTrackIndex] = useState(0);
   const [isPlaying, setIsPlaying] = useState(false);
-  const [infoText, setInfoText] = useState("Wanna play music while scrolling?");
+  const [infoText, setInfoText] = useState("Click to play music 🎵");
   const audioRef = useRef(null);
   const lastTapTime = useRef(0);
   const clickTimeout = useRef(null);
-  const isPlayingRef = useRef(false); // mirror of isPlaying to use inside callbacks
+  const isPlayingRef = useRef(false);
 
-  // Keep ref in sync
   useEffect(() => {
     isPlayingRef.current = isPlaying;
   }, [isPlaying]);
 
-  // Helper: reliably set src and optionally play
-  const setSourceAndMaybePlay = (src, shouldPlay) => {
+  // Core play function — always called from user gesture
+  const playAudio = (index) => {
     const audio = audioRef.current;
     if (!audio) return;
 
-    // Set source, force reload, apply volume
-    audio.src = src;
+    audio.src = playlist[index];
+    audio.volume = 0.6;
+    audio.muted = false;
+
     audio.load();
 
-    // Always ensure not muted and reasonable volume
-    audio.muted = false;
-    if (audio.volume === 0) audio.volume = 0.5;
-
-    if (!shouldPlay) return;
-
-    // Wait for canplay before calling play to avoid errors
-    const onCanPlay = () => {
-      // Try play in the same user gesture frame if possible
-      const p = audio.play();
-      if (p && typeof p.catch === "function") {
-        p.catch(() => {
-          // If blocked, reflect paused state
-          setIsPlaying(false);
-          setInfoText("Wanna play music while scrolling?");
-        });
-      }
-      audio.removeEventListener("canplay", onCanPlay);
-    };
-    audio.addEventListener("canplay", onCanPlay);
+    audio.play()
+      .then(() => {
+        setIsPlaying(true);
+        setInfoText("Double click to change track 🎶");
+      })
+      .catch(() => {
+        setIsPlaying(false);
+        setInfoText("Click to play music 🎵");
+      });
   };
 
-  // Play a specific track (called by click gestures)
-  const playTrack = (index) => {
-    setCurrentTrackIndex(index);
-    setIsPlaying(true);
-    setInfoText("Double tap to change the music");
-    setSourceAndMaybePlay(playlist[index], true);
-  };
-
-  // Toggle play/pause
-  const togglePlay = () => {
+  const pauseAudio = () => {
     const audio = audioRef.current;
     if (!audio) return;
+    audio.pause();
+    setIsPlaying(false);
+    setInfoText("Click to play music 🎵");
+  };
 
+  const togglePlay = () => {
     if (isPlayingRef.current) {
-      audio.pause();
-      setIsPlaying(false);
-      setInfoText("Wanna play music while scrolling?");
+      pauseAudio();
     } else {
-      // Ensure current src is set correctly before playing
-      setSourceAndMaybePlay(playlist[currentTrackIndex], true);
-      setIsPlaying(true);
-      setInfoText("Double tap to change the music");
+      playAudio(currentTrackIndex);
     }
   };
 
-  // Shuffle to next random track, preserve play/pause state
   const shuffleNextTrack = () => {
-    const audio = audioRef.current;
-    if (!audio) return;
-
-    const wasPlaying = isPlayingRef.current;
     let nextIndex;
     do {
       nextIndex = Math.floor(Math.random() * playlist.length);
     } while (nextIndex === currentTrackIndex && playlist.length > 1);
 
     setCurrentTrackIndex(nextIndex);
-
-    // If paused, only switch source; if playing, switch and continue
-    setSourceAndMaybePlay(playlist[nextIndex], wasPlaying);
+    // Only play if already playing
+    if (isPlayingRef.current) {
+      playAudio(nextIndex);
+    } else {
+      // Just update src silently
+      if (audioRef.current) {
+        audioRef.current.src = playlist[nextIndex];
+        audioRef.current.load();
+      }
+    }
   };
 
-  // Auto shuffle on track end
   const handleTrackEnd = () => {
-    shuffleNextTrack();
+    let nextIndex;
+    do {
+      nextIndex = Math.floor(Math.random() * playlist.length);
+    } while (nextIndex === currentTrackIndex && playlist.length > 1);
+    setCurrentTrackIndex(nextIndex);
+    playAudio(nextIndex);
   };
 
-  // Initial setup: volume, preload
-  useEffect(() => {
-    const audio = audioRef.current;
-    if (!audio) return;
-    audio.preload = "auto";
-    audio.volume = 0.6;
-    audio.muted = false;
-
-    // Dev-time diagnostics (optional; remove in prod)
-    const onError = () => {
-      // eslint-disable-next-line no-console
-      console.warn("Audio error loading/playing:", audio.error);
-    };
-    audio.addEventListener("error", onError);
-    return () => audio.removeEventListener("error", onError);
-  }, []);
-
-  // Volume with up/down keys (desktop)
+  // Volume keys
   useEffect(() => {
     const handleVolumeKeys = (e) => {
       const audio = audioRef.current;
@@ -135,7 +105,7 @@ const MusicPlayer = () => {
     return () => window.removeEventListener("keydown", handleVolumeKeys);
   }, []);
 
-  // Mobile double tap to change music
+  // Mobile double tap
   const handleDoubleTapMobile = () => {
     const now = Date.now();
     if (now - lastTapTime.current < 400) {
@@ -144,12 +114,11 @@ const MusicPlayer = () => {
     lastTapTime.current = now;
   };
 
-  // Unified single vs double click on desktop
+  // Desktop single vs double click
   const handleClick = () => {
     if (clickTimeout.current) {
       clearTimeout(clickTimeout.current);
       clickTimeout.current = null;
-      // Double click → change track, preserve play state
       shuffleNextTrack();
     } else {
       clickTimeout.current = setTimeout(() => {
@@ -165,9 +134,8 @@ const MusicPlayer = () => {
 
       <audio
         ref={audioRef}
-        src={playlist[currentTrackIndex]}
         onEnded={handleTrackEnd}
-        preload="auto"
+        preload="none"
       />
 
       <button
@@ -175,9 +143,14 @@ const MusicPlayer = () => {
         onTouchStart={handleDoubleTapMobile}
         className="p-4 rounded-full shadow-lg transition transform hover:scale-110"
         style={{
-          background: "linear-gradient(135deg, #00f0ff, #00ff80)",
-          boxShadow: "0 0 15px #00f0ff, 0 0 25px #00ff80",
+          background: isPlaying
+            ? "linear-gradient(135deg, #00f0ff, #00ff80)"
+            : "linear-gradient(135deg, #555, #333)",
+          boxShadow: isPlaying
+            ? "0 0 15px #00f0ff, 0 0 25px #00ff80"
+            : "0 0 10px rgba(0,0,0,0.5)",
           color: "white",
+          transition: "all 0.3s ease"
         }}
         aria-label={isPlaying ? "Pause music" : "Play music"}
       >
